@@ -1,0 +1,588 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// -----------------------------------------------------------------------------
+// 1. Users & Roles (RBAC)
+// -----------------------------------------------------------------------------
+
+model User {
+  id           String        @id @default(uuid())
+  email        String        @unique
+  passwordHash String
+  firstName    String
+  lastName     String
+  roleName     String        @default("User")
+  role         Role          @relation(fields: [roleName], references: [name], onDelete: Restrict)
+  departmentId String?
+  isActive     Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  department   Department?   @relation(fields: [departmentId], references: [id])
+  activityLogs ActivityLog[]
+  campaigns    Campaign[]    // Campaigns owned by user
+  sessions     UserSession[]
+  mfa          UserMFA?
+  recoveryCodes UserMFARecoveryCode[]
+  mfaChallenges UserMFAChallenge[]
+
+  // Notification fields
+  phoneNumber  String?
+  emailAlerts  Boolean       @default(false)
+  smsAlerts    Boolean       @default(false)
+  alertLocations Json?
+
+  @@map("user")
+}
+
+model UserMFA {
+  id              String    @id @default(uuid())
+  userId          String    @unique
+  secretEncrypted String    @db.Text
+  enabled         Boolean   @default(false)
+  verifiedAt      DateTime?
+  enabledAt       DateTime?
+  lastUsedAt      DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("usermfa")
+}
+
+model UserMFARecoveryCode {
+  id        String    @id @default(uuid())
+  userId    String
+  codeHash  String    @db.VarChar(128)
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([codeHash])
+  @@map("usermfarecoverycode")
+}
+
+model UserMFAChallenge {
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String    @unique @db.VarChar(128)
+  expiresAt DateTime
+  usedAt    DateTime?
+  ipAddress String?
+  userAgent String?   @db.VarChar(500)
+  createdAt DateTime  @default(now())
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tokenHash])
+  @@index([expiresAt])
+  @@map("usermfachallenge")
+}
+
+model UserSession {
+  id               String    @id @default(uuid())
+  userId           String
+  refreshTokenHash String?   @db.VarChar(128)
+  ipAddress        String?
+  userAgent        String?   @db.VarChar(500)
+  createdAt        DateTime  @default(now())
+  lastUsedAt       DateTime  @default(now())
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  revokedReason    String?
+
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([refreshTokenHash])
+  @@index([expiresAt])
+  @@map("usersession")
+}
+
+
+model Role {
+  name        String   @id // The name of the role (e.g., 'Admin')
+  permissions Json     // JSON string/object of boolean flags per nav ID
+  isSystem    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users       User[]
+  @@map("role")
+}
+
+model Department {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  users     User[]
+  @@map("department")
+}
+
+
+model ActivityLog {
+  id            String   @id @default(uuid())
+  userId        String?
+  userEmail     String?
+  userRole      String?
+  action        String
+  resourceType  String?
+  resourceId    String?
+  resource      String?
+  requestMethod String?
+  route         String?
+  ipAddress     String?
+  userAgent     String?  @db.VarChar(512)
+  success       Boolean  @default(true)
+  failureReason String?  @db.VarChar(512)
+  timestamp     DateTime @default(now())
+
+  user          User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  @@map("activitylog")
+}
+
+// -----------------------------------------------------------------------------
+// 2. Organization & Settings
+// -----------------------------------------------------------------------------
+
+model Organization {
+  id        String   @id @default(uuid())
+  name      String
+  timezone  String   @default("UTC")
+  currency  String   @default("USD")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@map("organization")
+}
+
+
+model Clinic {
+  id        String   @id @default(uuid())
+  name      String
+  address   String?
+  phone     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  googleLocationId String?
+
+  providers Provider[]
+  reviews   Review[]
+  @@map("clinic")
+}
+
+
+model Provider {
+  id        String   @id @default(uuid())
+  name      String
+  specialty String?
+  clinicId  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  clinic    Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  reviews   Review[]
+  @@map("provider")
+}
+
+
+model IntegrationCredential {
+  id           String   @id @default(uuid())
+  platformName String   @unique // e.g., GA4, MetaAds, CallRail
+  apiKey       String?
+  accessToken  String?  @db.Text
+  refreshToken String?  @db.Text
+  isActive     Boolean  @default(true)
+  lastSyncAt   DateTime?
+  lastSuccessfulSyncAt DateTime?
+  lastError    String?  @db.Text
+  config       Json?
+  updatedAt    DateTime @updatedAt
+  @@map("integrationcredential")
+}
+
+// -----------------------------------------------------------------------------
+// 3. Campaign Management
+// -----------------------------------------------------------------------------
+
+model Campaign {
+  id                 String   @id @default(uuid())
+  name               String
+  status             String   // e.g., Active, Completed, Draft
+  startDate          DateTime
+  endDate            DateTime?
+  budget             Decimal  @db.Decimal(10, 2)
+  spend              Decimal  @default(0) @db.Decimal(10, 2)
+  revenue            Decimal  @default(0) @db.Decimal(10, 2)
+  goal               String?
+  ownerId            String
+  
+  // External sync fields
+  platform           String?   // 'google_ads', 'meta_ads', or null for internal
+  externalCampaignId String?
+  lastSyncedAt       DateTime?
+
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  owner              User             @relation(fields: [ownerId], references: [id])
+  tasks              CampaignTask[]
+  assets             CampaignAsset[]
+  metrics            CampaignMetricSnapshot[]
+  emailMetrics       EmailCampaignMetric?
+
+  @@unique([platform, externalCampaignId])
+  @@map("campaign")
+}
+
+
+model EmailCampaignMetric {
+  id                 String   @id @default(uuid())
+  campaignId         String   @unique
+
+  sent               Int?
+  opens              Int?
+  clicks             Int?
+  unsubscribes       Int?
+  bounces            Int?
+  openRate           Float?
+  clickRate          Float?
+
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  @@map("emailcampaignmetric")
+}
+
+
+model CampaignMetricSnapshot {
+  id                 String   @id @default(uuid())
+  campaignId         String
+  date               DateTime 
+  impressions        Int      @default(0)
+  clicks             Int      @default(0)
+  spend              Decimal  @default(0) @db.Decimal(10, 2)
+  conversions        Decimal? @db.Decimal(10, 2)
+  conversionValue    Decimal? @db.Decimal(10, 2)
+  currencyCode       String   @default("USD")
+  createdAt          DateTime @default(now())
+  
+  campaign           Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  
+  @@unique([campaignId, date])
+  @@map("campaignmetricsnapshot")
+}
+
+
+model CampaignTask {
+  id         String   @id @default(uuid())
+  campaignId String
+  title      String
+  status     String   // e.g., Pending, In Progress, Completed
+  dueDate    DateTime?
+  assignedTo String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  @@map("campaigntask")
+}
+
+
+model CampaignAsset {
+  id         String   @id @default(uuid())
+  campaignId String
+  name       String   @default("Asset")
+  fileUrl    String
+  fileType   String
+  fileSize   String   @default("1.0 MB")
+  mimeType   String   @default("application/pdf")
+  createdAt  DateTime @default(now())
+
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  @@map("campaignasset")
+}
+
+// -----------------------------------------------------------------------------
+// 4. Budget Management
+// -----------------------------------------------------------------------------
+
+model Budget {
+  id           String   @id @default(uuid())
+  year         Int
+  month        Int?     // Null means annual budget
+  totalPlanned Decimal  @db.Decimal(12, 2)
+  totalActual  Decimal  @default(0) @db.Decimal(12, 2)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  expenses     Expense[]
+  @@map("budget")
+}
+
+
+model Expense {
+  id          String   @id @default(uuid())
+  budgetId    String
+  category    String
+  amount      Decimal  @db.Decimal(10, 2)
+  vendorId    String?
+  date        DateTime
+  description String?
+  createdAt   DateTime @default(now())
+
+  budget      Budget   @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+  vendor      Vendor?  @relation(fields: [vendorId], references: [id], onDelete: SetNull)
+  @@map("expense")
+}
+
+// -----------------------------------------------------------------------------
+// 5. Reputation Management
+// -----------------------------------------------------------------------------
+
+model Review {
+  id         String   @id @default(uuid())
+  platform   String   // e.g., Google
+  rating     Float
+  comment    String?  @db.Text
+  authorName String?
+  date       DateTime
+  clinicId   String?
+  providerId String?
+  externalReviewId String?
+  createdAt  DateTime @default(now())
+
+  // Reviewer info
+  firstName  String?
+  lastName   String?
+  email      String?
+  phone      String?
+
+  // Survey answers
+  providerAnsweredQuestions Boolean?
+  providerExplainedClearly  Boolean?
+  staffHelpful              Boolean?
+  wouldRecommend            Boolean?
+
+  // Reputation & Google Reviews fields
+  googleReviewId   String?
+  googleLocationId String?
+  reply            String?   @db.Text
+  repliedAt        DateTime?
+  reviewUrl        String?
+  responseTime     Float?
+  reviewUpdatedAt  DateTime?
+
+  clinic     Clinic?   @relation(fields: [clinicId], references: [id], onDelete: SetNull)
+  provider   Provider? @relation(fields: [providerId], references: [id], onDelete: SetNull)
+
+  @@unique([platform, externalReviewId])
+  @@map("review")
+}
+
+
+model ReviewRequest {
+  id          String   @id @default(uuid())
+  patientName String
+  contactInfo String   // Phone or Email
+  status      String   // e.g., Pending, Sent
+  sentAt      DateTime?
+  createdAt   DateTime @default(now())
+  @@map("reviewrequest")
+}
+
+// -----------------------------------------------------------------------------
+// 6. Vendor Management
+// -----------------------------------------------------------------------------
+
+model Vendor {
+  id               String   @id @default(uuid())
+  name             String
+  category         String
+  performanceScore Float?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  contacts         VendorContact[]
+  contracts        Contract[]
+  invoices         Invoice[]
+  expenses         Expense[]
+  @@map("vendor")
+}
+
+
+model VendorContact {
+  id        String   @id @default(uuid())
+  vendorId  String
+  name      String
+  email     String?
+  phone     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  vendor    Vendor   @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  @@map("vendorcontact")
+}
+
+
+model Contract {
+  id          String   @id @default(uuid())
+  vendorId    String
+  value       Decimal  @db.Decimal(12, 2)
+  startDate   DateTime
+  renewalDate DateTime
+  documentUrl String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  vendor      Vendor   @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  @@map("contract")
+}
+
+
+model Invoice {
+  id          String   @id @default(uuid())
+  vendorId    String
+  amount      Decimal  @db.Decimal(10, 2)
+  status      String   // e.g., Paid, Pending, Overdue
+  dueDate     DateTime
+  documentUrl String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  vendor      Vendor   @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  @@map("invoice")
+}
+
+// -----------------------------------------------------------------------------
+// 7. Marketing Analytics
+// -----------------------------------------------------------------------------
+
+model AnalyticsSnapshot {
+  id               String   @id @default(uuid())
+  date             DateTime @unique
+  websiteVisitors  Int      @default(0)
+  leads            Int      @default(0)
+  calls            Int      @default(0)
+  formSubmissions  Int      @default(0)
+  conversionRate   Float    @default(0)
+  roi              Float    @default(0)
+  spend            Decimal  @default(0) @db.Decimal(10, 2)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  @@map("analyticssnapshot")
+}
+
+// -----------------------------------------------------------------------------
+// 8. Leads Management
+// -----------------------------------------------------------------------------
+
+model Lead {
+  id        String   @id @default(uuid())
+  name      String
+  email     String?
+  phone     String?
+  condition String?
+  source    String   @default("Website Contact Form")
+  status         String   @default("New") // e.g., New, Contacted, Scheduled
+  
+  // External sync fields
+  externalLeadId String?
+  leadPlatform   String?
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  formSubmissions FormSubmission[]
+
+  @@unique([leadPlatform, externalLeadId])
+  @@map("lead")
+}
+
+
+model FormSubmission {
+  id                 String   @id @default(uuid())
+  externalSubmissionId String @unique
+  leadId             String?
+  formId             String?
+  formName           String?
+  name               String?
+  email              String?
+  phone              String?
+  message            String?  @db.Text
+  landingPage        String?
+  sourceUrl          String?
+  utmSource          String?
+  utmMedium          String?
+  utmCampaign        String?
+  utmTerm            String?
+  utmContent         String?
+  gclid              String?
+  fbclid             String?
+  metadata           Json?
+  submittedAt        DateTime?
+  receivedAt         DateTime @default(now())
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  lead               Lead?    @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  @@map("formsubmission")
+}
+
+// -----------------------------------------------------------------------------
+// 9. Call Tracking
+// -----------------------------------------------------------------------------
+
+model CallLog {
+  id        String   @id @default(uuid())
+  caller    String?
+  phone     String
+  duration  String
+  campaign  String?
+  status    String   @default("Missed")
+  location  String?
+  audioUrl  String?
+  timestamp DateTime @default(now())
+
+  externalCallId String?
+  @@unique([externalCallId])
+  @@map("calllog")
+}
+
+
+model LandingPageMetric {
+  id               String   @id @default(uuid())
+  path             String
+  pageviews        Int      @default(0)
+  uniqueVisitors   Int      @default(0)
+  bounceRate       Float    @default(0)
+  conversions      Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  @@map("landingpagemetric")
+}
+
+
+model AttributionData {
+  id               String   @id @default(uuid())
+  source           String
+  firstTouchCount  Int      @default(0)
+  lastTouchCount   Int      @default(0)
+  linearReturn     Float    @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  @@map("attributiondata")
+}
+
