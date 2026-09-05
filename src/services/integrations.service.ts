@@ -16,7 +16,8 @@ const KNOWN_PROVIDERS = [
   'mailchimp',
   'google-business',
   'custom-api',
-  'wordpress'
+  'wordpress',
+  'microsoft_outlook'
 ];
 
 export class IntegrationsService {

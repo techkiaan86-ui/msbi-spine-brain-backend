@@ -1,6 +1,6 @@
 import axios from 'axios';
 import prisma from '../plugins/db';
-import { pauboxService } from './paubox.service';
+import { microsoftGraphService } from './microsoft-graph.service';
 
 export interface PatientReviewRequestParams {
   to: string;
@@ -50,17 +50,13 @@ export class NotificationService {
       await this.sendSms(to, textBody);
       return { success: true, method: 'SMS' };
     } else {
-      // Send Email via Paubox API (or SendGrid fallback if Paubox is unconfigured)
-      if (process.env.PAUBOX_API_KEY && process.env.PAUBOX_API_USER) {
-        await pauboxService.sendEncryptedEmail({
-          to,
-          subject,
-          html: htmlBody,
-          text: textBody
-        });
-      } else {
-        await this.sendEmail(to, subject, textBody);
-      }
+      // Send Email exclusively via Microsoft Graph API (connected Microsoft 365 mailbox)
+      await microsoftGraphService.sendEmail({
+        to,
+        subject,
+        html: htmlBody,
+        text: textBody
+      });
       return { success: true, method: 'EMAIL' };
     }
   }
@@ -126,29 +122,16 @@ ${crmUrl}
   }
 
   private async sendEmail(to: string, subject: string, text: string) {
-    if (process.env.SENDGRID_API_KEY) {
-      try {
-        await axios.post(
-          'https://api.sendgrid.com/v3/mail/send',
-          {
-            personalizations: [{ to: [{ email: to }] }],
-            from: { email: process.env.EMAIL_FROM || 'alerts@msbi-spine-brain.com', name: 'MSBI CRM Alerts' },
-            subject: subject,
-            content: [{ type: 'text/plain', value: text }]
-          },
-          {
-            headers: {
-              'Authorization': `Bearer ${process.env.SENDGRID_API_KEY}`,
-              'Content-Type': 'application/json'
-            }
-          }
-        );
-        console.log(`[EMAIL ALERT] Sent successfully to ${to}`);
-      } catch (err: any) {
-        console.error(`[EMAIL ALERT] Failed to send to ${to} via SendGrid:`, err.response?.data || err.message);
-      }
-    } else {
-      console.log(`[EMAIL ALERT MOCK] To: ${to} | Subject: ${subject} | Length: ${text?.length || 0} chars`);
+    try {
+      await microsoftGraphService.sendEmail({
+        to,
+        subject,
+        text
+      });
+      console.log(`[EMAIL ALERT] Sent successfully to ${to} via Microsoft Graph`);
+    } catch (err: any) {
+      console.error(`[EMAIL ALERT FAILED] ${err.message}`);
+      throw err;
     }
   }
 
@@ -181,4 +164,3 @@ ${crmUrl}
 }
 
 export const notificationService = new NotificationService();
-

@@ -53,7 +53,7 @@ export class ReputationService {
       }
     }
 
-    // Dispatch via Paubox Email / SMS
+    // Dispatch via Microsoft Outlook Email / SMS
     let deliveryStatus = 'SENT';
     try {
       await notificationService.sendPatientReviewRequest({

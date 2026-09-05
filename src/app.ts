@@ -19,6 +19,7 @@ import { callsRoutes } from './routes/calls.routes';
 import { formSubmissionsRoutes } from './routes/form-submissions.routes';
 import rbacRoutes from './routes/rbac.routes';
 import googleOAuthRoutes from './routes/google-oauth.routes';
+import outlookOAuthRoutes from './routes/outlook-oauth.routes';
 import { webhooksRoutes } from './routes/webhooks.routes';
 import { complianceRoutes } from './routes/compliance.routes';
 import fastifyRateLimit from '@fastify/rate-limit';
@@ -148,12 +149,12 @@ export const buildApp = () => {
   app.register(formSubmissionsRoutes, { prefix: '/api/v1/form-submissions' });
   app.register(rbacRoutes, { prefix: '/api/v1/roles' });
   app.register(googleOAuthRoutes, { prefix: '/api/v1/integrations' });
+  app.register(outlookOAuthRoutes, { prefix: '/api/v1/integrations' });
   app.register(webhooksRoutes, { prefix: '/api/v1/webhooks' });
   app.register(complianceRoutes, { prefix: '/api/v1/compliance' });
 
   return app;
 };
-
 
 
 
