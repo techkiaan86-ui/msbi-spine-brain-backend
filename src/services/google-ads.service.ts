@@ -170,9 +170,7 @@ export class GoogleAdsService {
       SELECT
         campaign.id,
         campaign.name,
-        campaign.status,
-        campaign.start_date,
-        campaign.end_date
+        campaign.status
       FROM campaign
       WHERE campaign.status != 'REMOVED'
     `;
